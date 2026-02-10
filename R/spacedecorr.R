@@ -1,15 +1,14 @@
 #' Spatial de-correlation and covariate-adjusted residuals for single-cell data
 #'
-#' Fits a GAM/BAM per feature (gene/protein) to adjust for library size,
-#' optional covariates, and a 2D spatial smooth. Returns Pearson residuals,
-#' the spatial term, and one scalar p-value per feature (from \code{mgcv::k.check}).
+#' Models each gene or protein independently to remove spatially structured variation
+#' and adjust for covariates, returning Pearson residuals that represent decorrelated
+#' expression values. Diagnostic summaries of the spatial adjustment are also provided.
 #'
 #' @section Overview:
-#' \code{spacedecorr()} expects an expression matrix with cells in rows (n) and
-#' features in columns (p), and a \code{metadata} data.frame that contains x/y
-#' coordinates and a library-size column. You can (i) select which covariates to
-#' adjust (\code{covariates}), or (ii) fully override the model with
-#' \code{formula_override} (advanced).
+#' \code{spacedecorr()} takes an expression matrix with cells in rows and features in
+#' columns, together with metadata containing spatial coordinates and, optionally,
+#' library size and other covariates. Advanced users may override the default model
+#' specification via a custom formula.
 #'
 #' @param assay_matrix Numeric matrix (n x p). Rows are cells/spots; columns are features.
 #' @param metadata Data frame with at least the location and library-size columns.
@@ -18,8 +17,7 @@
 #'   Default: \code{c("sdimx","sdimy")}.
 #' @param libsize_col Column name for library size in metadata, or NULL.
 #'   If NULL and family="nb", library size is computed as rowSums(assay_matrix)
-#'   and used as offset(log(libsize)). If provided but contains any NA values,
-#'   library size is NOT used (no offset) and is NOT computed.
+#'   and used as offset(log(libsize)).
 #' @param covariates Either \code{NULL} (no extra covariates), \code{"all"} (use all
 #'   columns in \code{metadata} except location/library-size), or a character vector of
 #'   column names to include.
@@ -37,7 +35,7 @@
 #' @param verbose Logical. Print feature names as they are processed. Default: \code{FALSE}.
 #' @param formula_override Optional formula to fully override the internally constructed model.
 #'   Must reference standardized column names \code{libsize}, \code{sdimx}, \code{sdimy}, and any
-#'   covariates present in \code{metadata}. Use only if you know what you're doing.
+#'   covariates present in \code{metadata}.
 #' @param use_bam Logical; if TRUE uses \code{mgcv::bam()} (faster for large n),
 #'   if FALSE uses \code{mgcv::gam()}. If NULL, defaults to TRUE when n >= 5000.
 #' @param return_splines Logical; if TRUE, return the estimated spatial smooth term per gene.
@@ -56,39 +54,36 @@
 #' the matrix is transposed. If both \code{assay_matrix} and \code{metadata} have rownames,
 #' they must match; rows are reordered to align.
 #'
-#' P-values are currently the minimum \code{k.check} p-value across smooths for each feature
-#' (fast, simple heuristic). You can swap this strategy inside \code{getResiduals()} if desired.
-#'
 #' @examples
 #' \dontrun{
 #' set.seed(1)
-#' n <- 100; p <- 5
-#' X <- matrix(rpois(n*p, 5), n, p)
-#' meta <- data.frame(
-#'   sdimx = runif(n), sdimy = runif(n),
-#'   libsize = rowSums(X),
-#'   batch = sample(letters[1:3], n, TRUE)
-#' )
+#' # simulate toy spatial data
+#' n <- 500   # number of cells
+#' p <- 5     # number of genes
+#' metadata <- data.frame(x = runif(n), y = runif(n))
+#' Sigma <- telefit::maternCov(as.matrix(dist(coords)), smoothness = 0.5, range = 0.25)
+#' Delta <- diag(1, nrow = p)
 #'
-#' out <- spacedecorr(
-#'   assay_matrix = X,
-#'   metadata     = meta,
-#'   covariates   = c("batch"),
-#'   family       = "nb",
-#'   basis        = "ts",
-#'   nCores       = 1
-#' )
-#' str(out)
+#' # Simulate Matrix-Variate
+#' tmp <- MASS::mvrnorm(n = 1, mu = rep(0, num_cells * p), Sigma = Sigma %x% Delta)
+#' tmp <- as.matrix(matrix(tmp, ncol = p, byrow = T))
+#' gamma <- qgamma(pnorm(tmp), shape = 1, rate = 1)
 #'
-#' # Using all covariates (except coords/libsize):
-#' out2 <- spacedecorr(X, meta, covariates = "all", family = "nb")
+#' # Counts
+#' Y <- matrix(rpois(num_cells * p, lambda = as.numeric(gamma)),
+#'             nrow = num_cells, ncol = p)
+#' colnames(Y) <- paste0("gene", 1:p)
 #'
-#' # Advanced: full formula override (must reference libsize/sdimx/sdimy):
-#' out3 <- spacedecorr(
-#'   X, meta, covariates = NULL, family = "nb",
-#'   formula_override = y ~ offset(log(libsize)) + batch + s(sdimx, sdimy, bs = "ts", k = 80)
+#' # Fit spacedecorr
+#' fit <- spacedecorr(
+#'   assay_matrix = Y,
+#'   metadata = coords,
+#'   loc_cols = c("x", "y"),
+#'   libsize_col = NA,
+#'   family = "nb",
+#'   k = 200,
+#'   return_splines = TRUE
 #' )
-#' }
 #'
 #' @importFrom stats as.formula gaussian
 #' @importFrom mgcv gam bam nb predict.gam residuals.gam k.check
@@ -101,7 +96,7 @@ spacedecorr <- function(assay_matrix,
                         libsize_col = NULL,           # name of library size col in metadata
                         covariates  = NULL,        # NULL | "all" | character()
                         kprop = NULL,
-                        k = NULL,
+                        k = 200,
                         m = 2,
                         nCores = 1,
                         family = "nb",             # "gaussian" or "nb"
