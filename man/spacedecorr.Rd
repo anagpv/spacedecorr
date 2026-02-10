@@ -8,7 +8,7 @@ spacedecorr(
   assay_matrix,
   metadata,
   loc_cols = c("sdimx", "sdimy"),
-  libsize_col = "libsize",
+  libsize_col = NULL,
   covariates = NULL,
   kprop = NULL,
   k = NULL,
@@ -17,7 +17,9 @@ spacedecorr(
   family = "nb",
   basis = "ts",
   verbose = FALSE,
-  formula_override = NULL
+  formula_override = NULL,
+  use_bam = NULL,
+  return_splines = TRUE
 )
 }
 \arguments{
@@ -29,8 +31,10 @@ Can include any additional covariates to adjust for.}
 \item{loc_cols}{Character length-2. Names of the x and y columns in \code{metadata}.
 Default: \code{c("sdimx","sdimy")}.}
 
-\item{libsize_col}{Character scalar. Name of the library-size column in \code{metadata}.
-If missing, it is computed as \code{rowSums(assay_matrix)}. Default: \code{"libsize"}.}
+\item{libsize_col}{Column name for library size in metadata, or NULL.
+If NULL and family="nb", library size is computed as rowSums(assay_matrix)
+and used as offset(log(libsize)). If provided but contains any NA values,
+library size is NOT used (no offset) and is NOT computed.}
 
 \item{covariates}{Either \code{NULL} (no extra covariates), \code{"all"} (use all
 columns in \code{metadata} except location/library-size), or a character vector of
@@ -58,6 +62,12 @@ or a \link[stats]{family} object. For \code{"nb"}, \code{offset(log(libsize))} i
 \item{formula_override}{Optional formula to fully override the internally constructed model.
 Must reference standardized column names \code{libsize}, \code{sdimx}, \code{sdimy}, and any
 covariates present in \code{metadata}. Use only if you know what you're doing.}
+
+\item{use_bam}{Logical; if TRUE uses \code{mgcv::bam()} (faster for large n),
+if FALSE uses \code{mgcv::gam()}. If NULL, defaults to TRUE when n >= 5000.}
+
+\item{return_splines}{Logical; if TRUE, return the estimated spatial smooth term per gene.
+Can be large for many genes; set FALSE to save memory.}
 }
 \value{
 A named list with:

@@ -16,8 +16,10 @@
 #'   Can include any additional covariates to adjust for.
 #' @param loc_cols Character length-2. Names of the x and y columns in \code{metadata}.
 #'   Default: \code{c("sdimx","sdimy")}.
-#' @param libsize_col Character scalar. Name of the library-size column in \code{metadata}.
-#'   If missing, it is computed as \code{rowSums(assay_matrix)}. Default: \code{"libsize"}.
+#' @param libsize_col Column name for library size in metadata, or NULL.
+#'   If NULL and family="nb", library size is computed as rowSums(assay_matrix)
+#'   and used as offset(log(libsize)). If provided but contains any NA values,
+#'   library size is NOT used (no offset) and is NOT computed.
 #' @param covariates Either \code{NULL} (no extra covariates), \code{"all"} (use all
 #'   columns in \code{metadata} except location/library-size), or a character vector of
 #'   column names to include.
@@ -36,6 +38,10 @@
 #' @param formula_override Optional formula to fully override the internally constructed model.
 #'   Must reference standardized column names \code{libsize}, \code{sdimx}, \code{sdimy}, and any
 #'   covariates present in \code{metadata}. Use only if you know what you're doing.
+#' @param use_bam Logical; if TRUE uses \code{mgcv::bam()} (faster for large n),
+#'   if FALSE uses \code{mgcv::gam()}. If NULL, defaults to TRUE when n >= 5000.
+#' @param return_splines Logical; if TRUE, return the estimated spatial smooth term per gene.
+#'   Can be large for many genes; set FALSE to save memory.
 #'
 #' @returns A named list with:
 #' \itemize{
@@ -92,7 +98,7 @@
 spacedecorr <- function(assay_matrix,
                         metadata,
                         loc_cols    = c("sdimx","sdimy"),  # names of x,y cols in metadata
-                        libsize_col = "libsize",           # name of library size col in metadata
+                        libsize_col = NULL,           # name of library size col in metadata
                         covariates  = NULL,        # NULL | "all" | character()
                         kprop = NULL,
                         k = NULL,
@@ -101,30 +107,37 @@ spacedecorr <- function(assay_matrix,
                         family = "nb",             # "gaussian" or "nb"
                         basis  = "ts",             # "tp","ts","d","ds","te"
                         verbose = FALSE,
-                        formula_override = NULL) { # optional: full mgcv formula (uses standardized names)
+                        formula_override = NULL, # optional: full mgcv formula (uses standardized names)
+                        use_bam = NULL,
+                        return_splines = TRUE) {
 
   assay_matrix <- as.matrix(assay_matrix)
   metadata <- as.data.frame(metadata)
 
-  # ---- check/standardize required columns ------------------------------------
   if (length(loc_cols) != 2) stop("loc_cols must be length-2: c(x_col, y_col).")
   if (!all(loc_cols %in% names(metadata)))
     stop("metadata must contain location columns: ", paste(loc_cols, collapse = ", "))
   xcol <- loc_cols[1]; ycol <- loc_cols[2]
-
-  # if libsize missing, compute it; then standardize names
-  if (!libsize_col %in% names(metadata)) {
-    metadata[[libsize_col]] <- rowSums(assay_matrix)
-  }
-
-  # Keep rownames for alignment
   rn_meta <- rownames(metadata)
-  # Make standardized columns used by the model
+
+  # Standardized columns
   metadata$sdimx   <- metadata[[xcol]]
   metadata$sdimy   <- metadata[[ycol]]
-  metadata$libsize <- metadata[[libsize_col]]
 
-  # ---- orientation/alignment --------------------------------------------------
+  # library size
+  if (identical(family, "nb")){
+    if(is.na(libsize_col)){
+      use_libsize <- FALSE
+      metadata$libsize <- NA
+    } else if (is.null(libsize_col) | (!libsize_col %in% names(metadata))) {
+      metadata$libsize <- rowSums(assay_matrix)
+      use_libsize <- TRUE
+    } else {
+      ls <- metadata[[libsize_col]]
+    }
+  }
+
+
   if (nrow(assay_matrix) != nrow(metadata)) {
     if (ncol(assay_matrix) == nrow(metadata)) {
       assay_matrix <- t(assay_matrix)
@@ -138,89 +151,161 @@ spacedecorr <- function(assay_matrix,
     assay_matrix <- assay_matrix[rn_meta, , drop = FALSE]
   }
 
-  # ---- family -----------------------------------------------------------------
+  # family ---
   family <- if (identical(family, "gaussian")) stats::gaussian() else mgcv::nb()
 
-  # ---- k / kprop --------------------------------------------------------------
+  #  k / kprop ---
   n <- nrow(assay_matrix)
   ksplines <- if (!is.null(k)) as.integer(k) else as.integer(round((if (is.null(kprop)) 0.1 else kprop) * n))
 
-  # ---- smoother ---------------------------------------------------------------
+  # smoother ---
   if (basis %in% c("d","ds")) {
     smoother <- paste0('s(sdimx, sdimy, bs="', basis, '", k=', ksplines, ', xt=list(m=', m, '))')
   } else {
     smoother <- paste0('s(sdimx, sdimy, bs="', basis, '", k=', ksplines, ')')
   }
 
-  # ---- choose covariates ------------------------------------------------------
-  reserved_std <- c("sdimx","sdimy","libsize")
-  if (is.null(covariates)) {
+  # choose covariates ---
+  reserved_std <- c("sdimx", "sdimy", "libsize")  # always exclude these from covariates
+  reserved_orig <- unique(c(loc_cols, libsize_col))
+  reserved_orig <- reserved_orig[!is.na(reserved_orig)]  # handles libsize_col = NULL
+
+  if (is.null(covariates)){
     covnames <- character(0)
-  } else if (identical(covariates, "all")) {
-    # everything except the *original* loc/libsize columns and the standardized ones
-    reserved_orig <- unique(c(loc_cols, libsize_col))
-    covnames <- setdiff(colnames(metadata), c(reserved_std, reserved_orig))
-  } else if (is.character(covariates)) {
-    missing_cov <- setdiff(covariates, colnames(metadata))
+  }else if (identical(covariates, "all")){
+    covnames <- setdiff(names(metadata), c(reserved_std, reserved_orig))
+  }else if (is.character(covariates)){
+    missing_cov <- setdiff(covariates, names(metadata))
     if (length(missing_cov)) warning("Dropping missing covariates: ", paste(missing_cov, collapse = ", "))
-    covnames <- intersect(covariates, setdiff(colnames(metadata), reserved_std))
-  } else {
+    covnames <- setdiff(intersect(covariates, names(metadata)), reserved_std)
+  }else{
     stop("covariates must be NULL, 'all', or a character vector.")
   }
 
-  # ---- build model data & formula --------------------------------------------
-  dat <- metadata[, unique(c("libsize","sdimx","sdimy", covnames)), drop = FALSE]
+  # build model data & formula ---
+  dat <- metadata[, unique(c("sdimx", "sdimy", "libsize", covnames)), drop = FALSE]
+  if (!use_libsize) dat$libsize <- NULL
 
   if (!is.null(formula_override)) {
-    # NOTE: formula_override must reference standardized names: libsize, sdimx, sdimy, and any covariates by name.
     form <- stats::as.formula(formula_override)
   } else {
-    fprefix <- if (identical(family$family, "gaussian")) "y ~ " else "y ~ offset(log(libsize)) + "
     rhs <- paste(c(covnames, smoother), collapse = " + ")
-    form <- stats::as.formula(paste0(fprefix, rhs))
+    if (identical(family$family, "gaussian") || !use_libsize) {
+      form <- stats::as.formula(paste0("y ~ ", rhs))
+    } else {
+      form <- stats::as.formula(paste0("y ~ offset(log(libsize)) + ", rhs))
+    }
   }
 
-  # ---- labels & dims ----------------------------------------------------------
+  # labels & dims ---
   if (is.null(colnames(assay_matrix))) colnames(assay_matrix) <- paste0("X", seq_len(ncol(assay_matrix)))
   targets   <- colnames(assay_matrix)
   num_cells <- nrow(assay_matrix)
-  highdim   <- (num_cells >= 5000)
+  if(is.null(use_bam)) use_bam <- (num_cells >= 5000)
 
-  # ---- run --------------------------------------------------------------------
-  if (nCores > 1) {
+  # run ---
+  if (nCores > 1 && .Platform$OS.type != "windows") {
+    pieces <- parallel::mclapply(
+      targets,
+      getResiduals,
+      data = dat, formula = form, assay_matrix = assay_matrix,
+      num_cells = num_cells, family = family, use_bam = use_bam, verbose = verbose,
+      return_splines = return_splines,
+      mc.cores = nCores
+    )
+
+  } else if (nCores > 1) {
     cl <- parallel::makeCluster(getOption("cl.cores", nCores))
     parallel::clusterEvalQ(cl, { library(mgcv) })
     pieces <- parallel::parLapply(
-      cl, targets, getResiduals,
+      cl,targets, getResiduals,
       data = dat, formula = form, assay_matrix = assay_matrix,
-      num_cells = num_cells, family = family, highdim = highdim, verbose = verbose
+      num_cells = num_cells, family = family, use_bam = use_bam, verbose = verbose,
+      return_splines = return_splines
     )
-    parallel::stopCluster(cl)
+    suppressWarnings(parallel::stopCluster(cl))
   } else {
     pieces <- lapply(
-      targets, getResiduals,
+      targets,getResiduals,
       data = dat, formula = form, assay_matrix = assay_matrix,
-      num_cells = num_cells, family = family, highdim = highdim, verbose = verbose
+      num_cells = num_cells, family = family, use_bam = use_bam, verbose = verbose,
+      return_splines = return_splines
     )
+
   }
 
-  # ---- combine ---------------------------------------------------------------
+  # combine ---
   Residuals <- do.call(cbind, lapply(pieces, `[[`, "residuals"))
   colnames(Residuals) <- vapply(pieces, `[[`, character(1), "target")
   Residuals <- as.data.frame(Residuals)
 
-  Splines <- do.call(cbind, lapply(pieces, function(x) as.numeric(x$splines[, 1])))
-  colnames(Splines) <- vapply(pieces, `[[`, character(1), "target")
-  Splines <- as.data.frame(Splines)
+  Splines <- NULL
+  if (isTRUE(return_splines)){
+    Splines <- do.call(cbind, lapply(pieces, `[[`, "splines"))
+    colnames(Splines) <- vapply(pieces, `[[`, character(1), "target")
+    Splines <- as.data.frame(Splines)
+  }
 
   Pvalues <- as.data.frame(t(vapply(pieces, function(x) x$pvalue, numeric(1))))
   names(Pvalues) <- vapply(pieces, `[[`, "", "target")
   rownames(Pvalues) <- "pvalue"
 
-  list(Residuals = Residuals,
-       Splines   = Splines,
-       k.check.p = Pvalues,
-       metadata  = dat)
+  structure(
+    list(
+      residuals = Residuals,
+      splines = Splines,
+      k_check_p = Pvalues,
+      metadata = dat,
+      call = match.call(),
+      config = list(family = family$family, basis = basis, k = ksplines, m = m, use_bam = use_bam,
+                    covariates = covariates, loc_cols = loc_cols, libsize_col = libsize_col)
+    ),
+    class = "spacedecorr_fit"
+  )
 }
 
+#' @noRd
+getResiduals <- function(target, data, formula, assay_matrix,
+                         num_cells, family, use_bam, verbose,return_splines){
+  if (isTRUE(verbose)) message(target)
+  data$y <- assay_matrix[, target]
+
+  mod <- if (isTRUE(use_bam)) {
+    mgcv::bam(formula, family = family, data = data,
+              method = "fREML", discrete = TRUE, gc.level = 2, select = TRUE)
+  } else {
+    mgcv::gam(formula, family = family, data = data,
+              method = "REML", select = TRUE)
+  }
+
+  # Residuals
+  res   <- clip_residuals_(mgcv::residuals.gam(mod, type = "pearson"), num_cells)
+
+  # Splines
+  space <- NULL
+  if (isTRUE(return_splines)) {
+    space <- mgcv::predict.gam(mod, data, type = "terms")[, "s(sdimx,sdimy)"]
+  }
+
+  # Test for eigen dimension
+  kp <- try(mgcv::k.check(mod), silent = TRUE)
+  kpvalue <- if (!inherits(kp, "try-error") && "p-value" %in% colnames(kp)) {
+    suppressWarnings(min(kp[, "p-value"], na.rm = TRUE))
+  } else NA_real_
+
+  list(
+    target    = target,
+    residuals = as.numeric(res),
+    splines   = as.numeric(space),
+    pvalue    = as.numeric(kpvalue)
+  )
+}
+
+#' @noRd
+clip_residuals_ <- function(vec, n) {
+  b <- sqrt(n)
+  vec[vec < -b] <- -b
+  vec[vec >  b] <-  b
+  vec
+}
 

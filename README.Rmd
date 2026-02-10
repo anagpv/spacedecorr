@@ -1,54 +1,103 @@
+# SpaceDecorr
+
+SpaceDecorr adjusts gene expression for spatially induced correlations by fitting
+gene-wise generalized additive models (GAMs) with spatial smoothers and returning
+decorrelated residuals suitable for downstream network or correlation analysis.
+
+The method is designed for spatial transcriptomics data, but can be applied to any
+setting where shared spatial structure induces spurious gene–gene correlations.
+
 ---
-output: github_document
----
-
-<!-- README.md is generated from README.Rmd. Please edit that file -->
-
-```{r, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  fig.path = "man/figures/README-",
-  out.width = "100%"
-)
-```
-
-# spacedecorr
-
-<!-- badges: start -->
-<!-- badges: end -->
-
-The goal of spacedecorr is to ...
 
 ## Installation
 
-You can install the development version of spacedecorr like so:
-
-``` r
-# FILL THIS IN! HOW CAN PEOPLE INSTALL YOUR DEV PACKAGE?
+Install from GitHub using devtools:
+```{r}
+install.packages("devtools")
+devtools::install_github("YOUR_GITHUB_USERNAME/spacedecorr")
 ```
 
-## Example
+---
+## Quick example
 
-This is a basic example which shows you how to solve a common problem:
+This example simulates a small spatial dataset where multiple independent genes share a common spatial pattern, inducing correlation that is not due to direct biological interaction.
 
-```{r example}
-library(spacedecorr)
-## basic example code
+```{r}
+set.seed(1)
+
+# simulate toy spatial data
+n <- 500   # number of cells
+p <- 5     # number of genes
+
+metadata <- data.frame(
+  x = runif(n),
+  y = runif(n)
+)
+
+# Cell-cell correlation
+Sigma <- telefit::maternCov(as.matrix(dist(coords)), smoothness = 0.5, range = 0.25)
+
+# Gene-gene correlation
+Delta <- diag(1, nrow = p)
+
+# Simulate Matrix-Variate
+tmp <- MASS::mvrnorm(n = 1, mu = rep(0, num_cells * p), Sigma = Sigma %x% Delta)
+tmp <- as.matrix(matrix(tmp, ncol = p, byrow = T))
+gamma <- qgamma(pnorm(tmp), shape = 1, rate = 1)
+
+# Counts
+Y <- matrix(rpois(num_cells * p, lambda = as.numeric(gamma)),
+            nrow = num_cells, ncol = p)
+colnames(Y) <- paste0("gene", 1:p)
+
+# Fit spacedecorr
+fit <- spacedecorr(
+  assay_matrix = Y,
+  metadata = coords,
+  loc_cols = c("x", "y"),
+  libsize_col = NA,
+  family = "nb",
+  k = 200,
+  return_splines = TRUE
+)
+
+# Get residuals
+resid_mat <- fit$residuals
+cor(Y)
+cor(resid_mat)
+
+# Look at splines
+splines_mat <- fit$splines
+ggplot(cbind(splines_mat, metadata), aes(x=x, y=y, col = gene1)) +
+  geom_point() +
+  scale_color_viridis_c()
 ```
 
-What is special about using `README.Rmd` instead of just `README.md`? You can include R chunks like so:
+---
 
-```{r cars}
-summary(cars)
-```
+## Output
 
-You'll still need to render `README.Rmd` regularly, to keep `README.md` up-to-date. `devtools::build_readme()` is handy for this.
+`spacedecorr()` returns an object of class `spacedecorr_fit` containing:
 
-You can also embed plots, for example:
+- `residuals`: matrix of decorrelated expression values (cells × genes)  
+- `splines`: estimated spatial smooth term (optional)  
+- `k_check_p`: diagnostic p-values from `mgcv::k.check`  
+- `metadata`: model frame used for fitting  
 
-```{r pressure, echo = FALSE}
-plot(pressure)
-```
+These residuals can be used directly for correlation, network construction,  
+or other downstream analyses.
 
-In that case, don't forget to commit and push the resulting figure files, so they display on GitHub and CRAN.
+---
+
+## Notes
+
+- Spatial adjustment is performed **independently for each gene**.  
+- Library size offsets are included by default for negative binomial models, but can  
+  be disabled for simulation studies.  
+- Parallel computation is supported via the `nCores` argument.
+
+---
+
+## Paper
+
+Vasconcelos, Ana Gabriela, et al. ["Accounting for Spatial Correlation in Graphical Analysis of Spatial Transcriptomics Data."](https://www.biorxiv.org/content/10.1101/2025.07.23.666450v1) bioRxiv (2025): 2025-07.

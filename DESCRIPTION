@@ -1,10 +1,15 @@
 Package: spacedecorr
 Type: Package
-Title: Spatial De-correlation for Single-cell Data
+Title: Spatial De-correlation for Single-Cell Data
 Version: 0.1.0
-Authors@R: 
-    person("Your", "Name", email = "you@example.com", role = c("aut", "cre"))
-Description: Fits spatial GAM models to remove spatial effects and adjust for covariates in single-cell spatial data.
+Authors@R:
+    person("Gabriela", "Vasconcelos",
+           email = "anagabipv@gmail.com",
+           role = c("aut", "cre"))
+Description: Fits gene-wise generalized additive models with spatial smoothers
+    to remove spatially induced correlations and adjust for covariates in
+    single-cell spatial data, returning decorrelated residuals for downstream
+    analysis.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
