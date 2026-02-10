@@ -1,3 +1,6 @@
+---
+output: github_document
+---
 # SpaceDecorr
 
 SpaceDecorr adjusts gene expression for spatially induced correlations by fitting
