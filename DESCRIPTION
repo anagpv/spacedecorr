@@ -22,3 +22,5 @@ Suggests:
     Matrix,
     Seurat,
     SingleCellExperiment
+URL: https://github.com/anagpv/spacedecorr
+BugReports: https://github.com/anagpv/spacedecorr/issues
