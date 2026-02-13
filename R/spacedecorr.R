@@ -92,17 +92,17 @@
 
 spacedecorr <- function(assay_matrix,
                         metadata,
-                        loc_cols    = c("sdimx","sdimy"),  # names of x,y cols in metadata
-                        libsize_col = NULL,           # name of library size col in metadata
-                        covariates  = NULL,        # NULL | "all" | character()
+                        loc_cols    = c("sdimx","sdimy"),
+                        libsize_col = NULL,
+                        covariates  = NULL,
                         kprop = NULL,
                         k = 200,
                         m = 2,
                         nCores = 1,
-                        family = "nb",             # "gaussian" or "nb"
-                        basis  = "ts",             # "tp","ts","d","ds","te"
+                        family = "nb",
+                        basis  = "ts",
                         verbose = FALSE,
-                        formula_override = NULL, # optional: full mgcv formula (uses standardized names)
+                        formula_override = NULL,
                         use_bam = NULL,
                         return_splines = TRUE) {
 
