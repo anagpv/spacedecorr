@@ -14,7 +14,7 @@ setting where shared spatial structure induces spurious gene–gene correlations
 Install from GitHub using devtools:
 ```r
 install.packages("devtools")
-devtools::install_github("YOUR_GITHUB_USERNAME/spacedecorr")
+devtools::install_github("anagpv/spacedecorr")
 ```
 
 ---

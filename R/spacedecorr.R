@@ -41,7 +41,7 @@
 #' @param return_splines Logical; if TRUE, return the estimated spatial smooth term per gene.
 #'   Can be large for many genes; set FALSE to save memory.
 #'
-#' @returns A named list with:
+#' @return A named list with:
 #' \itemize{
 #'   \item \code{Residuals}: data.frame (n x p) of Pearson residuals (one column per feature).
 #'   \item \code{Splines}:   data.frame (n x p) of the spatial-term predictions (first term column).
@@ -84,7 +84,7 @@
 #'   k = 200,
 #'   return_splines = TRUE
 #' )
-#'
+#' }
 #' @importFrom stats as.formula gaussian
 #' @importFrom mgcv gam bam nb predict.gam residuals.gam k.check
 #' @export
