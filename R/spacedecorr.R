@@ -120,6 +120,7 @@ spacedecorr <- function(assay_matrix,
   metadata$sdimy   <- metadata[[ycol]]
 
   # library size
+  use_libsize <- FALSE
   if (identical(family, "nb")){
     if(is.na(libsize_col)){
       use_libsize <- FALSE
